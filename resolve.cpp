@@ -1562,6 +1562,24 @@ Operand resolve_expr_ternary(SourceLocation loc, ExprTernary* expr) {
   return op_rvalue(then_op.type);
 }
 
+struct ResolvedExprList {
+  Expr** sorted_exprs;
+  size_t num_sorted_exprs;
+  Type* type;
+};
+
+Map expr_lists_map;
+
+void push_sorted_expr_lists(Expr* expr, ResolvedExprList* list) {
+  map_put(&expr_lists_map, expr, list);
+}
+
+ResolvedExprList* get_sorted_expr_lists(Expr* expr) {
+  ResolvedExprList* result = static_cast<ResolvedExprList*>(map_get(&expr_lists_map, expr));
+  assert(result);
+  return result;
+}
+
 Operand resolve_expr_compound(SourceLocation loc, ExprCompound* expr, Type* expected) {
   if(!expr->type && !expected) {
     fatal_error(loc, "cannot infer type of compound literal without context");
@@ -1572,40 +1590,97 @@ Operand resolve_expr_compound(SourceLocation loc, ExprCompound* expr, Type* expe
   } else {
     type = expected;
   }
-
+  ResolvedExprList* resolved_list = static_cast<ResolvedExprList*>(malloc(sizeof(ResolvedExprList)));
+  resolved_list->type = type;
+  Expr** sorted_exprs = NULL;
+  
   if(type->kind == TYPE_ARRAY) {
     TypeArray* arr = static_cast<TypeArray*>(type);
     size_t max_index = 0;
     for(size_t i = 0; i < expr->num_items; ++i) {
       CompoundItem item = expr->items[i];
+	  size_t next_index = i;
       if(item.kind == COMPOUND_NAMED) {
-	fatal_error(item.loc, "named initializer list's items only allowed for aggregate types");
+		fatal_error(item.loc, "named initializer list's items only allowed for aggregate types");
       } else if(item.kind == COMPOUND_INDEXED) {
-	Operand index = resolve_expr(loc, item.index);
-	if(!is_integer_type(index.type)) {
-	  fatal_error(item.loc, "index must be of integer type");
-	}
-	if(index.kind != OPERAND_CONST) {
-	  fatal_error(item.loc, "index must be constant");
-	}
-	convert_op(&index, type_ullong);
-	max_index = MAX(max_index, index.val.ull);
+		Operand index = resolve_expr(loc, item.index);
+		if(!is_integer_type(index.type)) {
+		  fatal_error(item.loc, "index must be of integer type");
+		}
+		if(index.kind != OPERAND_CONST) {
+		  fatal_error(item.loc, "index must be constant");
+		}
+		convert_op(&index, type_ullong);
+		next_index = index.val.ull;
+		max_index = MAX(max_index, index.val.ull);
       } else {
-	max_index = MAX(i, max_index);
+		max_index = MAX(i, max_index);
       }
+	  while(next_index > buf_len(sorted_exprs)) {
+		ConstVal val = {};
+		val.kind = CONST_DEFAULT;
+		buf_push(sorted_exprs, expr_const(val));
+	  }
+	  if(next_index < buf_len(sorted_exprs)) {
+		sorted_exprs[next_index] = item.expr;
+	  } else {
+		buf_push(sorted_exprs, item.expr);
+	  }
       Operand init = resolve_expr_expect(item.loc, item.expr, arr->elem);
       if(!is_implictly_castable(init, arr->elem)) {
-	fatal_error(item.loc, "cannot initialize type %s with type %s", type_name(arr->elem), type_name(init.type));
+		fatal_error(item.loc, "cannot initialize type %s with type %s", type_name(arr->elem), type_name(init.type));
       }
     }
     if(!arr->len) {
       type = type_arr(arr->elem, max_index);
     }
   } else if(type->kind == TYPE_AGGREGATE) {
-    assert(0);
+	TypeAggregate* agg = static_cast<TypeAggregate*>(type);
+	for(size_t i = 0; i < expr->num_items; ++i) {
+      CompoundItem item = expr->items[i];
+	  size_t next_index = i;
+	  AggregateTypeItem* item_to_initialize = NULL;
+	  if(item.kind == COMPOUND_NONE) {
+		if(i > agg->num_items) {
+		  fatal_error(item.loc, "too many initializers in compound literal");
+		}
+		item_to_initialize = &agg->items[i];
+	  } else if(item.kind == COMPOUND_INDEXED) {
+		fatal_error(item.loc, "initializing %s with indexed compound item", agg->is_union ? "union" : "struct");
+	  } else {
+		assert(item.kind == COMPOUND_NAMED);
+		for(AggregateTypeItem* agg_item_type = agg->items; agg_item_type != agg->items + agg->num_items; ++agg_item_type) {
+		  if(agg_item_type->name == item.name) {
+			item_to_initialize = agg_item_type;
+			next_index = agg_item_type - agg->items;
+			break;
+		  }
+		}
+		if(!item_to_initialize) {
+		  fatal_error(item.loc, "no field name %s in %s %s", item.name, agg->is_union ? "union" : "struct", type_name(agg));
+		}
+	  }
+	  Operand init = resolve_expr_expect(item.loc, item.expr, item_to_initialize->type);
+	  if(!is_implictly_castable(init, item_to_initialize->type)) {
+		fatal_error(item.loc, "cannot initialize field '%s' of type %s from expression of type %s", item_to_initialize->name, type_name(item_to_initialize->type), type_name(init.type));
+	  }
+	  while(next_index > buf_len(sorted_exprs)) {
+		ConstVal val = {};
+		val.kind = CONST_DEFAULT;
+		buf_push(sorted_exprs, expr_const(val));
+	  }
+	  if(next_index < buf_len(sorted_exprs)) {
+		sorted_exprs[next_index] = item.expr;
+	  } else {
+		buf_push(sorted_exprs, item.expr);
+	  }
+	}
   } else {
     fatal_error(loc, "cannot initialize type %s from initializer list", type_name(type));
   }
+  resolved_list->sorted_exprs = sorted_exprs;
+  resolved_list->num_sorted_exprs = buf_len(sorted_exprs);
+  push_sorted_expr_lists(expr, resolved_list);
   Operand result = op_rvalue(type);
   result.is_compound = true;
   return result;

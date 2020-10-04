@@ -21,7 +21,7 @@ const char* preamble =
 
 void gen_fixup_lines() {
   if(gen_current_line != source_line || gen_file_name != source_file_name) {
-    genf("\n\n#line %llu", source_line);
+    genf("\n#line %llu", source_line);
     gen_current_line = source_line;
     if(gen_file_name != source_file_name) {
       genf(" \"%s\"", source_file_name);
@@ -37,9 +37,13 @@ void gen_line() {
 }
 
 void gen_expr(Expr* expr);
+void gen_cdecl_type(Type* type, const char* name);
 
 void gen_const(ExprConst* cnst) {
   switch(cnst->val.kind) {
+  case CONST_DEFAULT:
+	genf("{}");
+	break;
   case CONST_INTEGER:
     if(cnst->val.mod == MOD_CHAR) {
       genf("'%c'", cnst->val.c);
@@ -198,8 +202,30 @@ void gen_expr(Expr* expr) {
     gen_expr(field->left_expr);
     genf(".%s", field->name);
   } break;
-  case EXPR_COMPOUND:
-    assert(0);
+  case EXPR_COMPOUND: {
+	ExprCompound* comp = static_cast<ExprCompound*>(expr);
+	ResolvedExprList* list = get_sorted_expr_lists(expr);
+	if(comp->type) {
+	  if(comp->type->kind != TYPESPEC_ARR) {
+		gen_cdecl_typespec(comp->type, NULL);
+	  }
+	} else {
+	  if(list->type->kind != TYPE_ARRAY) {
+		gen_cdecl_type(list->type, NULL);
+	  }
+	}
+	genf(" {");
+	++gen_indent;
+	for(size_t i = 0; i < list->num_sorted_exprs; ++i) {
+	  if(i != 0) {
+		genf(", ");
+	  }
+	  gen_expr(list->sorted_exprs[i]);
+	}
+	--gen_indent;
+	genf("}");
+    break;
+  }
   default:
     assert(0);
   }
@@ -286,6 +312,14 @@ void gen_cdecl_type(Type* type, const char* name) {
     genf("const ");
     gen_cdecl_type(cnst, name);
   } break;
+  case TYPE_AGGREGATE: {
+	TypeAggregate* agg = static_cast<TypeAggregate*>(type);
+	genf("%s", agg->name);
+	if(name) {
+	  genf(" %s", name);
+	}
+	break;
+  }
   default:
     assert(0);
   }

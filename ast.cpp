@@ -21,6 +21,7 @@ enum ConstKind {
   CONST_INTEGER,
   CONST_FLOAT,
   CONST_STRING,
+  CONST_DEFAULT,
 };
 
 struct ConstVal {

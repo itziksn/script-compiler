@@ -63,6 +63,7 @@ Expr* parse_expr_compound(Typespec* type) {
 
   while(!is_token(TOKEN_RBRACE) && !is_token(TOKEN_EOF)) {
     CompoundItem item;
+	item.loc = current_token.loc;
     if(is_token(TOKEN_NAME) && peek_token(1).kind == TOKEN_ASSIGN) {
       item.kind = COMPOUND_NAMED;
       item.name = consume_token().name;

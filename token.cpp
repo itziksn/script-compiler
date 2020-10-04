@@ -118,6 +118,8 @@ const char* token_kind_name(TokenKind kind) {
     return "*";
   case TOKEN_DIV:
     return "/";
+  case TOKEN_DOT:
+	return ".";
   case TOKEN_GTE:
     return ">=";
   case TOKEN_GT:
