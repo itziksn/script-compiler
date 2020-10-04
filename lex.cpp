@@ -559,7 +559,7 @@ bool expect_token(TokenKind kind) {
     next_token();
     return true;
   } else {
-    error_here("expected token %s - got %s", token_kind_name(kind), token_kind_name(current_token.kind));
+    error_here("expected token %s but got %s", token_kind_name(kind), token_kind_name(current_token.kind));
   }
   return false;
 }

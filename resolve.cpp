@@ -47,8 +47,13 @@ struct TypePtr : Type {
   Type* base;
 };
 
+struct TypeParam {
+  const char* name;
+  Type* type;
+};
+
 struct TypeFunc : Type {
-  Type** params;
+  TypeParam* params;
   size_t num_params;
   Type* ret;
 };
@@ -139,9 +144,9 @@ char* type_name_buffer(Type* type, char* buffer) {
     buf_printf(buffer, "func(");
     for(size_t i = 0; i < func->num_params; ++i) {
       if(i != 0) {
-	buf_printf(buffer, ", ");
+		buf_printf(buffer, ", ");
       }
-      buffer = type_name_buffer(func->params[i], buffer);
+      buffer = type_name_buffer(func->params[i].type, buffer);
     }
     buf_printf(buffer, "):");
     buffer = type_name_buffer(func->ret, buffer);
@@ -171,10 +176,10 @@ Type* create_primitive_type(TypeKind kind, size_t size, size_t align) {
 
 Map cached_func_types;
 
-uint64_t hash_function(Type** params, size_t num_params, Type* ret) {
+uint64_t hash_function(TypeParam* params, size_t num_params, Type* ret) {
   uint64_t hash = 1315423911;
-  for(Type** it = params; it != params + num_params; ++it) {
-    hash ^= ((hash << 5) + (hash_ptr((intptr_t)(*it)) + (hash >> 2)));
+  for(TypeParam* it = params; it != params + num_params; ++it) {
+    hash ^= ((hash << 5) + (hash_ptr((intptr_t)(it->type)) + (hash >> 2)));
   }
   hash ^= ((hash << 5) + (hash_ptr((intptr_t)ret) + (hash >> 2)));
   
@@ -186,15 +191,15 @@ struct CachedEntryTypeFunc {
   CachedEntryTypeFunc* next;
 };
 
-TypeFunc* type_func(Type** params, size_t num_params, Type* ret) {
+TypeFunc* type_func(TypeParam* params, size_t num_params, Type* ret) {
   uint64_t hash = hash_function(params, num_params, ret);
   CachedEntryTypeFunc* first = (CachedEntryTypeFunc*)map_get_hashed(&cached_func_types, (void*)hash, hash);
   for(CachedEntryTypeFunc* it = first; it; it = it->next) {
     if(it->func->ret == ret && it->func->num_params == num_params) {
       for(size_t i = 0; i < num_params; ++i) {
-	if(params[i] != it->func->params[i]) {
-	  goto next;
-	}
+		if(params[i].type != it->func->params[i].type || params[i].name != it->func->params[i].name) {
+		  goto next;
+		}
       }
       return it->func;
     }
@@ -440,6 +445,10 @@ bool is_scalar_type(Type* type) {
   }
 }
 
+bool is_default_init_expr(Expr* expr) {
+  return expr->kind == EXPR_CONST && static_cast<ExprConst*>(expr)->val.kind == CONST_DEFAULT;
+}
+
 #define CASE(k, field)					\
   case k:						\
   switch(type->kind) {					\
@@ -508,7 +517,7 @@ void convert_const_op(Operand* op, Type* type) {
   CASE(TYPE_FLOAT, f)
   CASE(TYPE_DOUBLE, d)
   default:
-    assert(0);
+	  op->type = type;
     break;
   }
   assert(op->type == type);
@@ -563,13 +572,14 @@ bool is_null_ptr(Operand op) {
 
 Type* unqualify_type(Type* type) {
   if(type->kind == TYPE_CONST) {
-    return static_cast<TypeConst*>(type)->base;
+    return unqualify_type(static_cast<TypeConst*>(type)->base);
   }
   return type;
 }
 
 // This function needs the Operand to detect null-pointer
 bool is_implictly_castable(Operand op, Type* dest) {
+  dest = unqualify_type(dest);
   if(dest == op.type) {
     return true;
   } 
@@ -595,8 +605,8 @@ bool is_implictly_castable(Operand op, Type* dest) {
     if(op.type->kind == TYPE_ARRAY) {
       TypePtr* dest_ptr = static_cast<TypePtr*>(dest);
       TypeArray* op_arr = static_cast<TypeArray*>(op.type);
-      if(dest_ptr->base == op_arr->elem) {
-	return true;
+      if(unqualify_type(dest_ptr->base) == unqualify_type(op_arr->elem)) {
+		return true;
       }
     }
     return false;
@@ -830,6 +840,7 @@ Operand resolve_expr(SourceLocation loc, Expr* expr);
 Operand resolve_expr_expect(SourceLocation loc, Expr* expr, Type* expected);
 
 Type* resolve_typespec(SourceLocation loc, Typespec* type) {
+  Type* result = NULL;
   switch(type->kind) {
   case TYPESPEC_NAME: {
     TypespecName* name = static_cast<TypespecName*>(type);
@@ -837,11 +848,12 @@ Type* resolve_typespec(SourceLocation loc, Typespec* type) {
     if(sym->kind != SYM_TYPE) {
       fatal_error(loc, "%s is not a type name", name->name);
     }
-    return sym->type;
+    result = sym->type;
   } break;
   case TYPESPEC_PTR: {
     TypespecPtr* ptr = static_cast<TypespecPtr*>(type);
-    return type_ptr(resolve_typespec(loc, ptr->base));
+    result = type_ptr(resolve_typespec(loc, ptr->base));
+	break;
   }
   case TYPESPEC_ARR: {
     TypespecArr* arr = static_cast<TypespecArr*>(type);
@@ -849,20 +861,20 @@ Type* resolve_typespec(SourceLocation loc, Typespec* type) {
     if(arr->size) {
       Operand op_size = resolve_expr(loc, arr->size);
       if(op_size.kind != OPERAND_CONST) {
-	fatal_error(loc, "size of array must be a constant expression");
+		fatal_error(loc, "size of array must be a constant expression");
       }
       if(!is_integer_type(op_size.type)) {
-	fatal_error(loc, "size of array must be of integer type");
+		fatal_error(loc, "size of array must be of integer type");
       }
       if(is_signed_type(op_size.type)) {
-	convert_op(&op_size, type_llong);
-	if(op_size.val.ll <= 0) {
-	  fatal_error(loc, "array size must be greater than zero");
-	}
+		convert_op(&op_size, type_llong);
+		if(op_size.val.ll <= 0) {
+		  fatal_error(loc, "array size must be greater than zero");
+		}
       }
       size = op_size.val.ull;
     }
-    return type_arr(resolve_typespec(loc, arr->elem), size);
+    result = type_arr(resolve_typespec(loc, arr->elem), size);
   } break;
 	
   case TYPESPEC_FUNC:
@@ -870,6 +882,11 @@ Type* resolve_typespec(SourceLocation loc, Typespec* type) {
     assert(0);
     return NULL;
   }
+
+  if(type->is_const) {
+	return type_const(result);
+  }
+  return result;
 }
 
 
@@ -1468,6 +1485,23 @@ Operand resolve_expr_cast(SourceLocation loc, ExprCast* expr) {
   return op;
 }
 
+struct SortedCall {
+  Expr** exprs;
+  size_t num_exprs;
+};
+
+Map sorted_call_args;
+
+void put_sorted_call(Expr* expr, SortedCall* call) {
+  map_put(&sorted_call_args, expr, call);
+}
+
+SortedCall* get_sorted_call(Expr* expr) {
+  SortedCall* call = static_cast<SortedCall*>(map_get(&sorted_call_args, expr));
+  assert(call);
+  return call;
+}
+
 Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
   Operand func_op = resolve_expr(loc, expr->func);
   if(func_op.type->kind != TYPE_FUNC) {
@@ -1481,15 +1515,51 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
     fatal_error(loc, "too few argumets in function call");
   }
 
+  SortedCall* sorted = static_cast<SortedCall*>(malloc(sizeof(SortedCall)));
+  Expr** sorted_exprs = NULL;
+  
   for(size_t i = 0; i < func_type->num_params; ++i) {
-    Type* param_type = func_type->params[i];
-    Expr* arg = expr->args[i];
-    Operand arg_op = resolve_expr_rvalue(loc, arg);
-    if(!is_implictly_castable(arg_op, param_type)) {
-      fatal_error(loc, "argument %llu of function call expected to be of type %s, but %s was given", i + 1, type_name(param_type), type_name(arg_op.type));
+	size_t index_param = i;
+	TypeParam* initializing_param = NULL;
+    CallArg arg = expr->args[i];
+	if(arg.name) {
+	  for(TypeParam* param = func_type->params; param != func_type->params + func_type->num_params; ++param) {
+		if(arg.name == param->name) {
+		  initializing_param = param;
+		  index_param = param - func_type->params;
+		  break;
+		}
+	  }
+	  if(!initializing_param) {
+		fatal_error(loc, "no parameter name %s in function decalration", arg.name);
+	  }
+	} else {
+	  initializing_param = &func_type->params[i];
+	}
+	while(index_param > buf_len(sorted_exprs)) {
+	  ConstVal val = {};
+	  val.kind = CONST_DEFAULT;
+	  buf_push(sorted_exprs, expr_const(val));
+	}
+	if(index_param < buf_len(sorted_exprs)) {
+	  if(!is_default_init_expr(sorted_exprs[index_param])) {
+		fatal_error(loc, "re-assignment of argument %d", index_param);
+	  }
+	  sorted_exprs[index_param] = arg.expr;
+	} else {
+	  buf_push(sorted_exprs, arg.expr);
+	}
+    Operand arg_op = resolve_expr_expect(loc, arg.expr, initializing_param->type);
+	
+    if(!is_implictly_castable(arg_op, initializing_param->type)) {
+      fatal_error(loc, "argument %llu of function call expected to be of type %s, but %s was given", index_param + 1, type_name(initializing_param->type), type_name(arg_op.type));
     }
-    convert_op(&arg_op, param_type);
+    convert_op(&arg_op, initializing_param->type);
   }
+  
+  sorted->exprs = sorted_exprs;
+  sorted->num_exprs = buf_len(sorted_exprs);
+  put_sorted_call(expr, sorted);
   return op_rvalue(func_type->ret);
 }
   
@@ -1501,7 +1571,7 @@ Operand resolve_expr_field(SourceLocation loc, ExprField* expr) {
     if(left.type->kind == TYPE_PTR) {
       TypePtr* ptr = static_cast<TypePtr*>(left.type);
       if(ptr->base->kind != TYPE_AGGREGATE) {
-	fatal_error(loc, "accesing field of non aggregate type %s", type_name(ptr->base));
+		fatal_error(loc, "accesing field of non aggregate type %s", type_name(ptr->base));
       }
       aggr_type = static_cast<TypeAggregate*>(ptr->base);
     } else {
@@ -2030,10 +2100,10 @@ void resolve_decl_typedef(Sym* sym, DeclTypedef* decl) {
 
 void resolve_decl_func(Sym* sym, DeclFunc* decl) {
   Sym* enter = enter_scope();
-  Type** params = NULL;
+  TypeParam* params = NULL;
   for(FuncParam* param = decl->params; param != decl->params + decl->num_params; ++param) {
     Type* type = resolve_typespec(decl->loc, param->type);
-    buf_push(params, type);
+    buf_push(params, TypeParam{param->name, type});
   }
 
   Type* ret = type_void;
@@ -2045,7 +2115,7 @@ void resolve_decl_func(Sym* sym, DeclFunc* decl) {
   sym->type = type_func(params, buf_len(params), ret);
 
   for(size_t i = 0; i < decl->num_params; ++i) {
-    push_local_variable(decl->loc, decl->params[i].name, params[i]);
+    push_local_variable(decl->loc, decl->params[i].name, params[i].type);
   }
 
   if(!resolve_stmnt(decl->body, ret) && ret != type_void) {

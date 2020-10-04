@@ -80,7 +80,7 @@ Expr* parse_expr_compound(Typespec* type) {
       item.expr = parse_expression();
     }
     buf_push(items, item);
-      
+	
     if(!match_token(TOKEN_COMMA)) {
       break;
     }
@@ -180,14 +180,17 @@ Expr* parse_expr_un() {
   while(is_postfix_un_op(current_token.kind)) {
     expect_expression(expr);
     if(match_token(TOKEN_LPAREN)) {
-      Expr** args = NULL;
+      CallArg* args = NULL;
       if(!is_token(TOKEN_RPAREN)) {
-	Expr* arg = parse_expression();
-	buf_push(args, arg);
-	while(match_token(TOKEN_COMMA)) {
-	  arg = parse_expression();
-	  buf_push(args, arg);
-	}
+		do {
+		  CallArg arg = {};
+		  if(is_token(TOKEN_NAME) && peek_token(1).kind == TOKEN_ASSIGN) {
+			arg.name = consume_token().name;
+			consume_token(); // TOKEN_ASSIGN;
+		  }
+		  arg.expr = parse_expression();
+		  buf_push(args, arg);
+		} while(match_token(TOKEN_COMMA));
       }
       expect_token(TOKEN_RPAREN);
       expr =  expr_call(expr, args, buf_len(args));
@@ -307,9 +310,14 @@ Typespec* parse_typespec_atom() {
 
 Typespec* parse_typespec() {
   Typespec* type = parse_typespec_atom();
-  while(is_token(TOKEN_MUL) || is_token(TOKEN_LBRACKET)) {
+  while(is_token(TOKEN_MUL) || is_token(TOKEN_LBRACKET) || is_token_keyword(keyword_const)) {
     if(match_token(TOKEN_MUL)) {
       type = typespec_ptr(type);
+	} else if(match_keyword(keyword_const)) {
+	  if(!type) {
+		error_here("const must be proceeding a type");
+	  }
+	  type->is_const = true;
     } else {
       assert(is_token(TOKEN_LBRACKET));
       consume_token();

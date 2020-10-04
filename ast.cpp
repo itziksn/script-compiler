@@ -86,9 +86,14 @@ struct ExprCast : Expr {
   Expr* src_expr;
 };
 
+struct CallArg {
+  const char* name;
+  Expr* expr;
+};
+
 struct ExprCall : Expr {
   Expr* func;
-  Expr** args;
+  CallArg* args;
   size_t num_args;
 };
 
@@ -185,7 +190,7 @@ ExprTernary* expr_ternary(Expr* cond, Expr* then_expr, Expr* else_expr) {
   return expr;
 }
 
-ExprCall* expr_call(Expr* func, Expr** args, size_t num_args) {
+ExprCall* expr_call(Expr* func, CallArg* args, size_t num_args) {
   ExprCall* expr = (ExprCall*)malloc(sizeof(ExprCall));
   expr->kind = EXPR_CALL;
   expr->func = func;
@@ -206,6 +211,7 @@ enum TypespecKind {
 
 struct Typespec {
   TypespecKind kind;
+  bool is_const;
 };
 
 struct TypespecName : Typespec {
@@ -229,6 +235,7 @@ struct TypespecFunc : Typespec {
 
 TypespecName* typespec_name(const char* name) {
   TypespecName* type = (TypespecName*)malloc(sizeof(TypespecName));
+  type->is_const = false; 
   type->kind = TYPESPEC_NAME;
   type->name = name;
   return type;
@@ -236,6 +243,7 @@ TypespecName* typespec_name(const char* name) {
 
 TypespecArr* typespec_arr(Typespec* elem, Expr* size) {
   TypespecArr* type = (TypespecArr*)malloc(sizeof(TypespecArr));
+  type->is_const = false; 
   type->kind = TYPESPEC_ARR;
   type->elem = elem;
   type->size = size;
@@ -245,6 +253,7 @@ TypespecArr* typespec_arr(Typespec* elem, Expr* size) {
 
 TypespecPtr* typespec_ptr(Typespec* base) {
   TypespecPtr* type = (TypespecPtr*)malloc(sizeof(TypespecPtr));
+  type->is_const = false; 
   type->kind = TYPESPEC_PTR;
   type->base = base;
 

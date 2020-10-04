@@ -102,6 +102,9 @@ void gen_const(ExprConst* cnst) {
 }
 
 void gen_cdecl_typespec(Typespec* type, const char* name) {
+  if(type->is_const) {
+	genf("const ");
+  }
   switch(type->kind) {
   case TYPESPEC_NAME: {
     genf("%s", static_cast<TypespecName*>(type)->name);
@@ -182,11 +185,12 @@ void gen_expr(Expr* expr) {
     ExprCall* call = static_cast<ExprCall*>(expr);
     gen_expr(call->func);
     genf("(");
-    for(size_t i = 0; i < call->num_args; ++i) {
+	SortedCall* sorted_call = get_sorted_call(expr);
+    for(size_t i = 0; i < sorted_call->num_exprs; ++i) {
       if(i != 0) {
-	genf(", ");
+		genf(", ");
       }
-      gen_expr(call->args[i]);
+      gen_expr(sorted_call->exprs[i]);
     }
     genf(")");
   } break;
@@ -301,9 +305,9 @@ void gen_cdecl_type(Type* type, const char* name) {
     }
     for(size_t i = 0; i < func->num_params; ++i) {
       if(i != 0) {
-	genf(", ");
+		genf(", ");
       }
-      gen_cdecl_type(func->params[i], NULL);
+      gen_cdecl_type(func->params[i].type, func->params[i].name);
     }
     genf(")");
   } break;
