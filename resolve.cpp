@@ -2020,6 +2020,9 @@ bool resolve_stmnt(Stmnt* stmnt, Type* ret_type) {
     if(target_op.kind != OPERAND_LVALUE) {
       fatal_error(assign->loc, "assignment to non lvalue");
     }
+	if(target_op.type->kind == TYPE_CONST) {
+	  fatal_error(assign->loc, "assignnment to const variable");
+	}
     if(target_op.type->kind == TYPE_ARRAY) {
       fatal_error(assign->loc, "assignment to array type %s", type_name(target_op.type));
     }
