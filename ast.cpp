@@ -471,6 +471,7 @@ struct Decl {
 struct FuncParam {
   const char* name;
   Typespec* type;
+  Expr* init;
 };
 
 struct DeclFunc : Decl {

@@ -47,13 +47,8 @@ struct TypePtr : Type {
   Type* base;
 };
 
-struct TypeParam {
-  const char* name;
-  Type* type;
-};
-
 struct TypeFunc : Type {
-  TypeParam* params;
+  Type** param_types;
   size_t num_params;
   Type* ret;
 };
@@ -146,7 +141,7 @@ char* type_name_buffer(Type* type, char* buffer) {
       if(i != 0) {
 		buf_printf(buffer, ", ");
       }
-      buffer = type_name_buffer(func->params[i].type, buffer);
+      buffer = type_name_buffer(func->param_types[i], buffer);
     }
     buf_printf(buffer, "):");
     buffer = type_name_buffer(func->ret, buffer);
@@ -176,10 +171,10 @@ Type* create_primitive_type(TypeKind kind, size_t size, size_t align) {
 
 Map cached_func_types;
 
-uint64_t hash_function(TypeParam* params, size_t num_params, Type* ret) {
+uint64_t hash_function(Type** params, size_t num_params, Type* ret) {
   uint64_t hash = 1315423911;
-  for(TypeParam* it = params; it != params + num_params; ++it) {
-    hash ^= ((hash << 5) + (hash_ptr((intptr_t)(it->type)) + (hash >> 2)));
+  for(Type** it = params; it != params + num_params; ++it) {
+    hash ^= ((hash << 5) + (hash_ptr((intptr_t)(*it)) + (hash >> 2)));
   }
   hash ^= ((hash << 5) + (hash_ptr((intptr_t)ret) + (hash >> 2)));
   
@@ -191,13 +186,13 @@ struct CachedEntryTypeFunc {
   CachedEntryTypeFunc* next;
 };
 
-TypeFunc* type_func(TypeParam* params, size_t num_params, Type* ret) {
+TypeFunc* type_func(Type** params, size_t num_params, Type* ret) {
   uint64_t hash = hash_function(params, num_params, ret);
   CachedEntryTypeFunc* first = (CachedEntryTypeFunc*)map_get_hashed(&cached_func_types, (void*)hash, hash);
   for(CachedEntryTypeFunc* it = first; it; it = it->next) {
     if(it->func->ret == ret && it->func->num_params == num_params) {
       for(size_t i = 0; i < num_params; ++i) {
-		if(params[i].type != it->func->params[i].type || params[i].name != it->func->params[i].name) {
+		if(params[i] != it->func->param_types[i]) {
 		  goto next;
 		}
       }
@@ -209,7 +204,7 @@ TypeFunc* type_func(TypeParam* params, size_t num_params, Type* ret) {
 
   TypeFunc* type = (TypeFunc*)malloc(sizeof(TypeFunc));
   init_type(type, TYPE_FUNC, sizeof(void*), alignof(void*));
-  type->params = params;
+  type->param_types = params;
   type->num_params = num_params;
   type->ret = ret;
 
@@ -316,9 +311,12 @@ enum OperandKind {
   OPERAND_FUNC,
 };
 
+struct Sym;
+
 struct Operand {
   OperandKind kind;
   Type* type;
+  Sym* sym;
   ConstVal val;
   bool is_compound;
 };
@@ -674,7 +672,7 @@ void unify_arithmetic_ops(Operand* op1, Operand* op2) {
 
 
 Operand op_const(Type* type, ConstVal val) {
-  return {OPERAND_CONST, type, val};
+  return {OPERAND_CONST, type, NULL, val};
 }
 
 Operand op_lvalue(Type* type) {
@@ -685,8 +683,8 @@ Operand op_rvalue(Type* type) {
   return {OPERAND_RVALUE, type};
 }
 
-Operand op_func(TypeFunc* type) {
-  return {OPERAND_FUNC, type};
+Operand op_func(Sym* sym, TypeFunc* type) {
+  return {OPERAND_FUNC, type, sym};
 }
 
 enum SymKind {
@@ -705,7 +703,13 @@ struct Sym {
   Decl* decl; 
   
   Type* type;
-  ConstVal const_val;
+  union {
+	ConstVal const_val;
+	struct {
+	  const char** names;
+	  size_t num_names;
+	} func_params;
+  };
 };
 
 Map global_syms_map;
@@ -991,7 +995,7 @@ Operand resolve_expr_name(SourceLocation loc, ExprName* expr) {
   case SYM_CONST:
     return op_const(sym->type, sym->const_val);
   case SYM_FUNC:
-    return op_func(static_cast<TypeFunc*>(sym->type));
+    return op_func(sym, static_cast<TypeFunc*>(sym->type));
   case SYM_VAR:
     return op_lvalue(sym->type);
   case SYM_TYPE:
@@ -1508,6 +1512,13 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
     fatal_error(loc, "attempt to call a non function type %s", type_name(func_op.type));
   }
 
+  const char** param_names = NULL;
+  size_t num_param_names = 0;
+  if(func_op.sym) {
+	param_names = func_op.sym->func_params.names;
+	num_param_names = func_op.sym->func_params.num_names;
+  }
+
   TypeFunc* func_type = static_cast<TypeFunc*>(func_op.type);
   if(expr->num_args > func_type->num_params) {
     fatal_error(loc, "too many argumets in function call");
@@ -1520,21 +1531,21 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
   
   for(size_t i = 0; i < func_type->num_params; ++i) {
 	size_t index_param = i;
-	TypeParam* initializing_param = NULL;
+	Type* target_param = NULL;
     CallArg arg = expr->args[i];
 	if(arg.name) {
-	  for(TypeParam* param = func_type->params; param != func_type->params + func_type->num_params; ++param) {
-		if(arg.name == param->name) {
-		  initializing_param = param;
-		  index_param = param - func_type->params;
+	  for(const char** param_name = param_names; param_name != param_name + num_param_names; ++param_name) {
+		if(arg.name == *param_name) {
+		  index_param = param_name - param_names;
+		  target_param = func_type->param_types[index_param];
 		  break;
 		}
 	  }
-	  if(!initializing_param) {
+	  if(!target_param) {
 		fatal_error(loc, "no parameter name %s in function decalration", arg.name);
 	  }
 	} else {
-	  initializing_param = &func_type->params[i];
+	  target_param = func_type->param_types[i];
 	}
 	while(index_param > buf_len(sorted_exprs)) {
 	  ConstVal val = {};
@@ -1549,12 +1560,12 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
 	} else {
 	  buf_push(sorted_exprs, arg.expr);
 	}
-    Operand arg_op = resolve_expr_expect(loc, arg.expr, initializing_param->type);
+    Operand arg_op = resolve_expr_expect(loc, arg.expr, target_param);
 	
-    if(!is_implictly_castable(arg_op, initializing_param->type)) {
-      fatal_error(loc, "argument %llu of function call expected to be of type %s, but %s was given", index_param + 1, type_name(initializing_param->type), type_name(arg_op.type));
+    if(!is_implictly_castable(arg_op, target_param)) {
+      fatal_error(loc, "parameter %llu of function call expected to be of type %s, but %s was given", index_param + 1, type_name(target_param), type_name(arg_op.type));
     }
-    convert_op(&arg_op, initializing_param->type);
+    convert_op(&arg_op, target_param);
   }
   
   sorted->exprs = sorted_exprs;
@@ -2103,10 +2114,12 @@ void resolve_decl_typedef(Sym* sym, DeclTypedef* decl) {
 
 void resolve_decl_func(Sym* sym, DeclFunc* decl) {
   Sym* enter = enter_scope();
-  TypeParam* params = NULL;
+  Type** param_types = NULL;
+  const char** param_names = NULL;
   for(FuncParam* param = decl->params; param != decl->params + decl->num_params; ++param) {
     Type* type = resolve_typespec(decl->loc, param->type);
-    buf_push(params, TypeParam{param->name, type});
+    buf_push(param_types, type);
+	buf_push(param_names, param->name);
   }
 
   Type* ret = type_void;
@@ -2115,10 +2128,11 @@ void resolve_decl_func(Sym* sym, DeclFunc* decl) {
   }
 
   sym->kind = SYM_FUNC;
-  sym->type = type_func(params, buf_len(params), ret);
+  sym->type = type_func(param_types, buf_len(param_types), ret);
+  sym->func_params = {param_names, buf_len(param_names)};
 
-  for(size_t i = 0; i < decl->num_params; ++i) {
-    push_local_variable(decl->loc, decl->params[i].name, params[i].type);
+  for(size_t i = 0; i < buf_len(param_types); ++i) {
+    push_local_variable(decl->loc, param_names[i], param_types[i]);
   }
 
   if(!resolve_stmnt(decl->body, ret) && ret != type_void) {

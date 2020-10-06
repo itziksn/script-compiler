@@ -1,4 +1,3 @@
-
 bool is_prefix_un_op(TokenKind kind) {
   switch(kind) {
   case TOKEN_NOT:
@@ -386,21 +385,20 @@ StmntBlock* parse_stmnt_block(bool in_loop) {
 
 Stmnt* parse_stmnt_simple() {
   SourceLocation loc = current_token.loc;
-  if(is_token(TOKEN_NAME) && peek_token(1).kind == TOKEN_COLON) {
+  if(is_token(TOKEN_NAME) && (peek_token(1).kind == TOKEN_COLON || peek_token(1).kind == TOKEN_COLON_ASSIGN)) {
     const char* name = consume_token().name;
-    consume_token(); // TOKEN_COLON
-
     Typespec* type = NULL;
-    if(!is_token(TOKEN_ASSIGN)) {
-      type = parse_typespec();
-    }
-
     Expr* expr = NULL;
-    if(match_token(TOKEN_ASSIGN)) {
-      expr = parse_expression();
-    } else if(!type) {
-      error_here("variable declaration must have either an initializer or type");
-    }
+    if(match_token(TOKEN_COLON)) {
+      type = parse_typespec();
+	  if(match_token(TOKEN_ASSIGN)) {
+		expr = parse_expression();
+	  }
+    } else if(match_token(TOKEN_COLON_ASSIGN)) {
+	  expr = parse_expression();
+	} else {
+	  assert(0);
+	}
     return stmnt_decl(loc, name, type, expr);
   } else {
     Expr* expr = maybe_parse_expression();
@@ -603,14 +601,19 @@ DeclFunc* parse_func_decl() {
     }
 
     const char* param_name = consume_token().name;
-    
-    if(!expect_token(TOKEN_COLON))
+	Typespec* type = NULL;
+	Expr* expr = NULL;
+	if(match_token(TOKEN_COLON)) {
+	  type = parse_typespec();
+	  if(match_token(TOKEN_ASSIGN)) {
+		expr = parse_expression();
+	  }
+	} else if(match_token(TOKEN_COLON_ASSIGN)) {
+	  expr = parse_expression();
+	}
+	if(!type)
       return NULL;
-
-    Typespec* type = parse_typespec();
-    if(!type)
-      return NULL;
-    buf_push(params, FuncParam{ param_name, type });
+    buf_push(params, FuncParam{ param_name, type, expr });
     if(!match_token(TOKEN_COMMA)) {
       break;
     }

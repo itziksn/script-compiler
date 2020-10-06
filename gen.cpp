@@ -307,7 +307,7 @@ void gen_cdecl_type(Type* type, const char* name) {
       if(i != 0) {
 		genf(", ");
       }
-      gen_cdecl_type(func->params[i].type, func->params[i].name);
+      gen_cdecl_type(func->param_types[i], NULL);  // @Incomplete: We able to reserve the names (if provided), but let's ignore it for now
     }
     genf(")");
   } break;

@@ -1,6 +1,7 @@
 enum TokenKind {
   TOKEN_EOF = 0,
   TOKEN_COLON,
+  TOKEN_COLON_ASSIGN,
   TOKEN_LPAREN,
   TOKEN_RPAREN,
   TOKEN_LBRACE,
@@ -96,6 +97,8 @@ const char* token_kind_name(TokenKind kind) {
     return "string";
   case TOKEN_COLON:
     return ":";
+  case TOKEN_COLON_ASSIGN:
+    return ":=";
   case TOKEN_ASSIGN:
     return "=";
   case TOKEN_EQ:

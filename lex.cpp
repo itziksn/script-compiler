@@ -475,7 +475,6 @@ void next_token() {
     }
     break;
     CASE1('.', TOKEN_DOT)
-    CASE1(':', TOKEN_COLON)
     CASE1('(', TOKEN_LPAREN)
     CASE1(')', TOKEN_RPAREN)
     CASE1('{', TOKEN_LBRACE)
@@ -487,6 +486,7 @@ void next_token() {
     CASE1('?', TOKEN_QUESTION_MARK)
     CASE1('~', TOKEN_NEG)
       
+	CASE2(':', TOKEN_COLON, '=', TOKEN_COLON_ASSIGN)
     CASE2('=', TOKEN_ASSIGN, '=', TOKEN_EQ)
     CASE2('*', TOKEN_MUL, '=', TOKEN_ASSIGN_MUL)
     CASE2('%', TOKEN_MOD, '=', TOKEN_ASSIGN_MOD)
