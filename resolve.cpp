@@ -1522,19 +1522,20 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
   TypeFunc* func_type = static_cast<TypeFunc*>(func_op.type);
   if(expr->num_args > func_type->num_params) {
     fatal_error(loc, "too many argumets in function call");
-  } else if(expr->num_args < func_type->num_params) {
-    fatal_error(loc, "too few argumets in function call");
   }
+  // else if(expr->num_args < func_type->num_params) {
+  //   fatal_error(loc, "too few argumets in function call");
+  // }
 
   SortedCall* sorted = static_cast<SortedCall*>(malloc(sizeof(SortedCall)));
   Expr** sorted_exprs = NULL;
   
-  for(size_t i = 0; i < func_type->num_params; ++i) {
+  for(size_t i = 0; i < expr->num_args; ++i) {
 	size_t index_param = i;
 	Type* target_param = NULL;
     CallArg arg = expr->args[i];
 	if(arg.name) {
-	  for(const char** param_name = param_names; param_name != param_name + num_param_names; ++param_name) {
+	  for(const char** param_name = param_names; param_name != param_names + num_param_names; ++param_name) {
 		if(arg.name == *param_name) {
 		  index_param = param_name - param_names;
 		  target_param = func_type->param_types[index_param];
@@ -1566,6 +1567,36 @@ Operand resolve_expr_call(SourceLocation loc, ExprCall* expr) {
       fatal_error(loc, "parameter %llu of function call expected to be of type %s, but %s was given", index_param + 1, type_name(target_param), type_name(arg_op.type));
     }
     convert_op(&arg_op, target_param);
+  }
+
+  for(size_t i = 0; i < buf_len(sorted_exprs); ++i) {
+	if(is_default_init_expr(sorted_exprs[i])) {
+	  if(!func_op.sym || !func_op.sym->decl) {
+		fatal_error(loc, "too few argumets in function call");
+	  } else {
+		assert(func_op.sym->decl->kind == DECL_FUNC);
+		DeclFunc* decl = static_cast<DeclFunc*>(func_op.sym->decl);
+		if(!decl->params[i].init) {
+		  fatal_error(loc, "too few argumets in function call");
+		}
+		sorted_exprs[i] = decl->params[i].init;
+	  }
+	}
+  }
+
+  if(buf_len(sorted_exprs) < func_type->num_params) {
+	for(size_t i = buf_len(sorted_exprs); i < func_type->num_params; ++i) {
+	  if(!func_op.sym || !func_op.sym->decl) {
+		fatal_error(loc, "too few argumets in function call");
+	  } else {
+		assert(func_op.sym->decl->kind == DECL_FUNC);
+		DeclFunc* decl = static_cast<DeclFunc*>(func_op.sym->decl);
+		if(!decl->params[i].init) {
+		  fatal_error(loc, "too few argumets in function call");
+		}
+		buf_push(sorted_exprs, decl->params[i].init);
+	  }
+	}
   }
   
   sorted->exprs = sorted_exprs;
